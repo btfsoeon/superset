@@ -1,3 +1,7 @@
+################
+#  Providers   #
+################
+
 terraform {
   required_providers {
     aws = {
@@ -15,6 +19,13 @@ terraform {
 provider "aws" {
   region = "us-west-2"
 }
+
+data "aws_caller_identity" "current" {}
+
+
+################
+#     VPC      #
+################
 
 # Create VPC
 module "vpc" {
@@ -39,6 +50,10 @@ module "vpc" {
     }
 }
 
+################
+#  EKS MODULE  #
+################
+
 # Deploy EKS
 module "eks" {
     source = "terraform-aws-modules/eks/aws"
@@ -59,7 +74,7 @@ module "eks" {
         one = {
             name = "node-group-1"
 
-            instance_types = ["t3.small"]
+            instance_types = ["t3.medium"]
 
             min_size = 1
             max_size = 3
@@ -69,28 +84,13 @@ module "eks" {
         two = {
             name = "node-group-2"
 
-            instance_types = ["t3.small"]
+            instance_types = ["t3.medium"]
 
             min_size = 1
             max_size = 2
-            desired_siz = 1
+            desired_size = 2
         }
     }
-}
-
-#TODO set up eks alb https://andrewtarry.com/posts/terraform-eks-alb-setup/
-module "lb_role" {
-  source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-
-  role_name = "superset_eks_lb"
-  attach_load_balancer_controller_policy = true
-
-  oidc_providers = {
-    main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["kube-system:aws-load-balancer-controller"]
-    }
-  }
 }
 
 data "aws_eks_cluster" "cluster" {
@@ -99,6 +99,32 @@ data "aws_eks_cluster" "cluster" {
 
 data "aws_eks_cluster_auth" "cluster" {
   name = module.eks.cluster_name
+}
+
+# Add Addons
+module ebs-csi-driver-role {
+  source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+
+  role_name = "ebs_csi_driver"
+  attach_ebs_csi_policy = true
+  allow_self_assume_role = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+}
+
+resource "aws_eks_addon" "addons" {
+  for_each          = { for addon in var.addons : addon.name => addon }
+  cluster_name      = module.eks.cluster_name
+  addon_name        = each.value.name
+  # addon_version     = each.value.version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+  service_account_role_arn = module.ebs-csi-driver-role.iam_role_arn
 }
 
 provider "kubernetes" {
@@ -114,6 +140,21 @@ provider "helm" {
         cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
         token                  = data.aws_eks_cluster_auth.cluster.token
     }
+}
+
+# Set up eks alb https://andrewtarry.com/posts/terraform-eks-alb-setup/
+module "lb_role" {
+  source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+
+  role_name = "superset_eks_lb"
+  attach_load_balancer_controller_policy = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:aws-load-balancer-controller"]
+    }
+  }
 }
 
 resource "kubernetes_service_account" "service-account" {
@@ -171,6 +212,10 @@ resource "helm_release" "lb" {
   }
 }
 
+################
+#   Superset   #
+################
+
 # Separate namespace
 module "superset_namespace" {
   source = "git::https://github.com/gruntwork-io/terraform-kubernetes-namespace.git//modules/namespace?ref=v0.1.0"
@@ -178,55 +223,23 @@ module "superset_namespace" {
 }
 
 # Deploy Superset
-module superset {
-  source  = "terraform-module/release/helm"
-  version = "2.6.0"
-
-  namespace  = "superset"
-  repository =  "https://apache.github.io/superset"
-
-  app = {
-    name          = "my-superset"
-    version       = "0.10.9"
-    chart         = "superset"
-    force_update  = true
-    wait          = false
-    recreate_pods = false
-    deploy        = 1
-  }
-  values = [templatefile("../helm/superset/values.yaml", {
-    postgresPassword = "superset"
-  })]
-
-  set = [
-    {
-      name  = "global.postgresql.auth.postgresPassword"
-      value = "superset"
-    },
+resource "helm_release" "superset" {
+  name              = "my-superset"
+  repository        = "https://apache.github.io/superset"
+  chart             = "superset"
+  version           = "0.10.9"
+  namespace         = module.superset_namespace.name
+  depends_on = [
+    module.superset_namespace,
+    resource.aws_eks_addon.addons,
   ]
+  reuse_values      = true
+  force_update      = true
+  recreate_pods     = true
 
-  # set_sensitive = [
-  #   {
-  #     path  = "master.adminUser"
-  #     value = "jenkins"
-  #   },
-  # ]
+  values = [
+    file("../helm/superset/values.yaml")
+  ]
 }
-
-# resource "helm_release" "superset" {
-#   name       = "my-superset"
-#   repository = "https://apache.github.io/superset"
-#   chart      = "superset"
-#   version    = "0.10.9"
-
-#   values = [
-#     file("../helm/superset/values.yaml")
-#   ]
-
-#   set {
-#     name  = "global.postgresql.auth.postgresPassword"
-#     value = "superset"
-#   }
-# }
 
 #TODO extract variables

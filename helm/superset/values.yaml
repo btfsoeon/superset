@@ -35,7 +35,7 @@ runAsUser: 0
 serviceAccountName: ~
 serviceAccount:
   # -- Create custom service account for Superset. If create: true and serviceAccountName is not provided, `superset.fullname` will be used.
-  create: false
+  create: true
   annotations: {}
 
 # -- Install additional packages and do any other bootstrap configuration in this script
@@ -43,6 +43,8 @@ serviceAccount:
 # @default -- see `values.yaml`
 bootstrapScript: |
   #!/bin/bash
+  apt-get update && apt-get -y install git
+  pip install git+https://github.com/btfsoeon/PyAthena.git@7b9341839ee37a8b16e9c899177611cd24524484
   if [ ! -f ~/bootstrap ]; then echo "Running Superset with uid {{ .Values.runAsUser }}" > ~/bootstrap; fi
 
 # -- The name of the secret which we will use to generate a superset_config.py file
@@ -180,6 +182,8 @@ extraConfigMountPath: "/app/configs"
 image:
   repository: apachesuperset.docker.scarf.sh/apache/superset
   tag: ""
+  # repository: public.ecr.aws/a4o6f0k4/my-superset
+  # tag: 1.0.17
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -752,7 +756,7 @@ postgresql:
       enabled: true
       ##
       ## Persistent class
-      # storageClass: classname
+      storageClass: gp2
       ##
       ## Access modes:
       accessModes:
