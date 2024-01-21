@@ -194,28 +194,32 @@ initImage:
   pullPolicy: IfNotPresent
 
 service:
-  type: ClusterIP
+  type: NodePort
   port: 8088
   annotations: {}
     # cloud.google.com/load-balancer-type: "Internal"
   loadBalancerIP: ~
   nodePort:
     # -- (int)
-    http: nil
+    http: 30000
 
 ingress:
-  enabled: false
-  ingressClassName: ~
-  annotations: {}
+  enabled: true
+  ingressClassName: alb
+  annotations: {
+    alb.ingress.kubernetes.io/scheme: "internet-facing",
+    # kubernetes.io/role/elb: "",
+    alb.ingress.kubernetes.io/subnets: 'superset-vpc-public-us-west-2a, superset-vpc-public-us-west-2b, superset-vpc-public-us-west-2c'
+  }
     # kubernetes.io/tls-acme: "true"
     ## Extend timeout to allow long running queries.
     # nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
     # nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     # nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
-  path: /
+  path: /*
   pathType: ImplementationSpecific
   hosts:
-    - chart-example.local
+    - k8s-superset-mysupers-4cbb0064ba-1446489157.us-west-2.elb.amazonaws.com
   tls: []
   extraHostsRaw: []
   #  - secretName: chart-example-tls
