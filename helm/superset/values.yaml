@@ -35,7 +35,7 @@ runAsUser: 0
 serviceAccountName: ~
 serviceAccount:
   # -- Create custom service account for Superset. If create: true and serviceAccountName is not provided, `superset.fullname` will be used.
-  create: false
+  create: true
   annotations: {}
 
 # -- Install additional packages and do any other bootstrap configuration in this script
@@ -43,6 +43,8 @@ serviceAccount:
 # @default -- see `values.yaml`
 bootstrapScript: |
   #!/bin/bash
+  apt-get update && apt-get -y install git
+  pip install git+https://github.com/btfsoeon/PyAthena.git@7b9341839ee37a8b16e9c899177611cd24524484
   if [ ! -f ~/bootstrap ]; then echo "Running Superset with uid {{ .Values.runAsUser }}" > ~/bootstrap; fi
 
 # -- The name of the secret which we will use to generate a superset_config.py file
@@ -180,6 +182,8 @@ extraConfigMountPath: "/app/configs"
 image:
   repository: apachesuperset.docker.scarf.sh/apache/superset
   tag: ""
+  # repository: public.ecr.aws/a4o6f0k4/my-superset
+  # tag: 1.0.17
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -190,28 +194,32 @@ initImage:
   pullPolicy: IfNotPresent
 
 service:
-  type: ClusterIP
+  type: NodePort
   port: 8088
   annotations: {}
     # cloud.google.com/load-balancer-type: "Internal"
   loadBalancerIP: ~
   nodePort:
     # -- (int)
-    http: nil
+    http: 30000
 
 ingress:
-  enabled: false
-  ingressClassName: ~
-  annotations: {}
+  enabled: true
+  ingressClassName: alb
+  annotations: {
+    alb.ingress.kubernetes.io/scheme: "internet-facing",
+    # kubernetes.io/role/elb: "",
+    alb.ingress.kubernetes.io/subnets: 'superset-vpc-public-us-west-2a, superset-vpc-public-us-west-2b, superset-vpc-public-us-west-2c'
+  }
     # kubernetes.io/tls-acme: "true"
     ## Extend timeout to allow long running queries.
     # nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
     # nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     # nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
-  path: /
+  path: /*
   pathType: ImplementationSpecific
   hosts:
-    - chart-example.local
+    - k8s-superset-mysupers-4cbb0064ba-1446489157.us-west-2.elb.amazonaws.com
   tls: []
   extraHostsRaw: []
   #  - secretName: chart-example-tls
@@ -752,7 +760,7 @@ postgresql:
       enabled: true
       ##
       ## Persistent class
-      # storageClass: classname
+      storageClass: gp2
       ##
       ## Access modes:
       accessModes:
